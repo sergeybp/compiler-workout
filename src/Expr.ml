@@ -25,23 +25,23 @@ open GT
 type state = string -> int
 
 (* Empty state: maps every variable into nothing. *)
-let empty = fun x -> failwith (Printf.sprintf "Undefined variable %s" x)
+let empty = fun left -> failwith (Printf.sprintf "Undefined variable %s" left)
 
-(* Update: non-destructively "modifies" the state s by binding the variable x 
+(* Update: non-destructively "modifies" the state s by binding the variable left 
    to value v and returns the new state.
 *)
-let update x v s = fun y -> if x = y then v else s y
+let update left v s = fun right -> if left = right then v else s right
 
 (* An example of a non-trivial state: *)                                                   
-let s = update "x" 1 @@ update "y" 2 @@ update "z" 3 @@ update "t" 4 empty
+let s = update "left" 1 @@ update "right" 2 @@ update "z" 3 @@ update "t" 4 empty
 
 (* Some testing; comment this definition out when submitting the solution. *)
-let _ =
+(*let _ =
   List.iter
-    (fun x ->
-       try  Printf.printf "%s=%d\n" x @@ s x
+    (fun left ->
+       try  Printf.printf "%s=%d\n" left @@ s left
        with Failure s -> Printf.printf "%s\n" s
-    ) ["x"; "a"; "y"; "z"; "t"; "b"]
+    ) ["left"; "a"; "right"; "z"; "t"; "b"]*)
 
 (* Expression evaluator
 
@@ -50,5 +50,28 @@ let _ =
    Takes a state and an expression, and returns the value of the expression in 
    the given state.
 *)
-let eval = failwith "Not implemented yet"
+let rec eval state expr = 
+  let check e = if e then 1 else 0 
+  and toBoolean v = if v = 0 then false else true in
+    match expr with
+      | Const const -> const
+      | Var var -> state var
+      | Binop (op, l, r) -> 
+        let left = eval state l 
+        and right = eval state r in
+          match op with
+          | "+" -> left + right
+          | "-" -> left - right
+          | "*" -> left * right
+          | "/" -> left / right
+          | "%" -> left mod right
+          | ">"  -> check (left > right)
+          | "<"  -> check (left < right)
+          | "<=" -> check (left <= right)
+          | ">=" -> check (left >= right)
+          | "==" -> check (left == right)
+          | "!=" -> check (left <> right)
+          | "&&" -> check (toBoolean left && toBoolean right)
+          | "!!" -> check (toBoolean left || toBoolean right)
+          | _ -> failwith "Not implemented yet"
                     
