@@ -88,11 +88,11 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let rec eval (s, i'::i, o) = function
-      | Read x -> Expr.update x i' s, i, o
-      | Write y -> s, i'::i, o@[Expr.eval s y]
-      | Assign (x, y) -> Expr.update x (Expr.eval s y) s, i'::i, o
-      | Seq (y, y') -> eval (eval (s, i'::i, o) y) y'
+    let rec eval (s, i, o) = function
+      | Read x -> Expr.update x (List.hd i) s, (List.tl i), o
+      | Write y -> s, i, o@[Expr.eval s y]
+      | Assign (x, y) -> Expr.update x (Expr.eval s y) s, i, o
+      | Seq (y, y') -> eval (eval (s, i, o) y) y'
                                                          
   end
 
