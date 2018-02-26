@@ -1,4 +1,5 @@
-open GT       
+open GT      
+open Syntax 
        
 (* The type for the stack machine instructions *)
 @type insn =
@@ -23,7 +24,18 @@ type config = int list * Syntax.Stmt.config
 
    Takes a configuration and a program, and returns a configuration as a result
  *)                         
-let eval _ = failwith "Not yet implemented"
+let eval' c i = match c, i with
+	| (s, c), CONST x -> (x::s, c)
+	| (s, (s', x::i, o)), READ -> (x::s, (s', i, o))
+	| (x::s, (s', i, o)), WRITE -> (s, (s', i , o@[x]))
+	| (s, (s', i, o)), LD x -> ((s' x)::s, (s', i, o))
+	| (y::s, (s', i, o)), ST x -> (s, (Expr.update x y s', i, o))
+	| (y::x::s, c), BINOP op -> ((Expr.getBinop op x y)::s, c)
+	| _ -> failwith "Not yet implemented"
+
+let rec eval config prog = match config, prog with
+	| c, [] -> c 
+	| c, i::p -> eval (eval' c i) p
 
 (* Stack machine compiler
 
@@ -33,4 +45,13 @@ let eval _ = failwith "Not yet implemented"
    stack machine
  *)
 
-let compile _ = failwith "Not yet implemented"
+let rec compile' = function
+	| Expr.Const x -> [CONST x]
+	| Expr.Var x -> [LD x]
+	| Expr.Binop (op, x, y) -> compile' x @ compile' y @ [BINOP op]
+
+let rec compile = function
+	| Stmt.Read x -> [READ; ST x]
+	| Stmt.Write y -> compile' y @ [WRITE]
+	| Stmt.Assign (x, y) -> compile' y @ [ST x]
+	| Stmt.Seq (y, y')   -> compile y @ compile y'

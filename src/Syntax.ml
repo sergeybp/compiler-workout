@@ -41,7 +41,30 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec getBinop = 
+      let check e = if e then 1 else 0 
+      and toBoolean v = if v = 0 then false else true in
+        let bop = fun b left right -> check (b (toBoolean left) (toBoolean right)) and
+        cop = fun c left right -> check (c left right) in function
+          | "+" -> (+)
+          | "-" -> (-)
+          | "*" -> ( * )
+          | "/" -> (/)
+          | "%" -> (mod)
+          | ">"  -> cop (>)
+          | "<"  -> cop (<)
+          | "<=" -> cop (<=)
+          | ">=" -> cop (>=)
+          | "==" -> cop (==)
+          | "!=" -> cop (<>)
+          | "&&" -> bop (&&)
+          | "!!" -> bop (||)
+          | _ -> failwith "Not implemented yet"
+
+    let rec eval s = function
+      | Const c          -> c
+      | Var   v       -> s v
+      | Binop (op, x, y) -> (getBinop op) (eval s x) (eval s y)
 
   end
                     
@@ -65,6 +88,10 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval (s, i'::i, o) = function
+      | Read x -> Expr.update x i' s, i, o
+      | Write y -> s, i'::i, o@[Expr.eval s y]
+      | Assign (x, y) -> Expr.update x (Expr.eval s y) s, i'::i, o
+      | Seq (y, y') -> eval (eval (s, i'::i, o) y) y'
                                                          
   end
