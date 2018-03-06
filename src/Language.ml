@@ -76,7 +76,7 @@ module Expr =
      let op4 = ["+"; "-"]
      let op5 = ["*"; "/"; "%"]
 
-     fun getOp ops = List.map (fun op ->  (ostap ($(op)), fun x y -> Binop(op, x, y))) ops
+     let getOp ops = List.map (fun op ->  (ostap ($(op)), fun x y -> Binop(op, x, y))) ops
 
     (* Expression parser. You can use the following terminals:
 
@@ -88,7 +88,7 @@ module Expr =
       primary: 
         x: IDENT {Var x} 
         | d: DECIMAL { Const d } 
-        | -"(" parse -")"
+        | -"(" parse -")";
       parse: 
         !(Ostap.Util.expr
           (fun x -> x)

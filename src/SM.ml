@@ -1,5 +1,5 @@
 open GT      
-open Syntax   
+  
 open Language
        
 (* The type for the stack machine instructions *)
