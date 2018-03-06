@@ -43,10 +43,11 @@ let rec eval config prog = match config, prog with
 
      val run : prg -> int list -> int list
 
-   Takes an input stream, a program, and returns an output stream this program calculates
+   Takes a program, an input stream, and returns an output stream this program calculates
 *)
 
-let run p i = let (_, (_, _, o)) = eval ([], (Expr.empty, i, [])) p in o
+let run p i = let (_, (_, _, o)) = eval ([], (Language.Expr.empty, i, [])) p in o
+
 
 (* Stack machine compiler
 
