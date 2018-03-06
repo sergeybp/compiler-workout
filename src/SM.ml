@@ -45,6 +45,7 @@ let rec eval config prog = match config, prog with
 
    Takes an input stream, a program, and returns an output stream this program calculates
 *)
+
 let run p i = let (_, (_, _, o)) = eval ([], (Expr.empty, i, [])) p in o
 
 (* Stack machine compiler
@@ -54,6 +55,7 @@ let run p i = let (_, (_, _, o)) = eval ([], (Expr.empty, i, [])) p in o
    Takes a program in the source language and returns an equivalent program for the
    stack machine
  *)
+
 let rec compile' = function
 	| Expr.Const x -> [CONST x]
 	| Expr.Var x -> [LD x]
@@ -64,4 +66,5 @@ let rec compile = function
 	| Stmt.Write y -> compile' y @ [WRITE]
 	| Stmt.Assign (x, y) -> compile' y @ [ST x]
 	| Stmt.Seq (y, y')   -> compile y @ compile y'
+
 
