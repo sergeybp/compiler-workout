@@ -38,13 +38,6 @@ let rec eval config prog = match config, prog with
 	| c, [] -> c 
 	| c, i::p -> eval (eval' c i) p
 
-(* Top-level evaluation
-
-     val run : int list -> prg -> int list
-
-   Takes an input stream, a program, and returns an output stream this program calculates
-*)
-let run i p = let (_, (_, _, o)) = eval ([], (Syntax.Expr.empty, i, [])) p in o
 
 (* Top-level evaluation
 
