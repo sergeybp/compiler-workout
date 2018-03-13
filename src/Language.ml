@@ -43,65 +43,61 @@ module Expr =
  
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
-    *)
-    let rec getBinop = 
-      let check e = if e then 1 else 0 
-      and toBoolean v = if v = 0 then false else true in
-        let bop = fun b left right -> check (b (toBoolean left) (toBoolean right)) and
-        cop = fun c left right -> check (c left right) in function
-          | "+" -> (+)
-          | "-" -> (-)
-          | "*" -> ( * )
-          | "/" -> (/)
-          | "%" -> (mod)
-          | ">"  -> cop (>)
-          | "<"  -> cop (<)
-          | "<=" -> cop (<=)
-          | ">=" -> cop (>=)
-          | "==" -> cop (==)
-          | "!=" -> cop (<>)
-          | "&&" -> bop (&&)
-          | "!!" -> bop (||)
-          | _ -> failwith "Not implemented yet"
-
-    let rec eval s = function
-      | Const c          -> c
-      | Var   v       -> s v
-      | Binop (op, x, y) -> (getBinop op) (eval s x) (eval s y)
-
-
-     let op1 = ["!!"]
-     let op2 = ["&&"]
-     let op3 = ["<="; ">="; "<"; ">"; "=="; "!="]
-     let op4 = ["+"; "-"]
-     let op5 = ["*"; "/"; "%"]
-
-     let getOp ops = List.map (fun op ->  (ostap ($(op)), fun x y -> Binop(op, x, y))) ops
+    *)                                                      
+    let to_func op =
+      let bti   = function true -> 1 | _ -> 0 in
+      let itb b = b <> 0 in
+      let (|>) f g   = fun x y -> f (g x y) in
+      match op with
+      | "+"  -> (+)
+      | "-"  -> (-)
+      | "*"  -> ( * )
+      | "/"  -> (/)
+      | "%"  -> (mod)
+      | "<"  -> bti |> (< )
+      | "<=" -> bti |> (<=)
+      | ">"  -> bti |> (> )
+      | ">=" -> bti |> (>=)
+      | "==" -> bti |> (= )
+      | "!=" -> bti |> (<>)
+      | "&&" -> fun x y -> bti (itb x && itb y)
+      | "!!" -> fun x y -> bti (itb x || itb y)
+      | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)    
+    
+    let rec eval st expr =      
+      match expr with
+      | Const n -> n
+      | Var   x -> st x
+      | Binop (op, x, y) -> to_func op (eval st x) (eval st y)
 
     (* Expression parser. You can use the following terminals:
 
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
          DECIMAL --- a decimal constant [0-9]+ as a string
-   
     *) 
-    ostap (
-      primary: 
-        x: IDENT {Var x} 
-        | d: DECIMAL { Const d } 
-        | -"(" parse -")";
-      parse: 
-        !(Ostap.Util.expr
-          (fun x -> x)
-          [|
-            `Lefta, getOp op1;
-            `Lefta, getOp op2;
-            `Nona,  getOp op3;
-            `Lefta, getOp op4;
-            `Lefta, getOp op5
-          |]
-          primary
-        )
-      )
+    ostap (                                      
+      parse:
+	  !(Ostap.Util.expr 
+             (fun x -> x)
+	     (Array.map (fun (a, s) -> a, 
+                           List.map  (fun s -> ostap(- $(s)), (fun x y -> Binop (s, x, y))) s
+                        ) 
+              [|                
+		`Lefta, ["!!"];
+		`Lefta, ["&&"];
+		`Nona , ["=="; "!="; "<="; "<"; ">="; ">"];
+		`Lefta, ["+" ; "-"];
+		`Lefta, ["*" ; "/"; "%"];
+              |] 
+	     )
+	     primary);
+      
+      primary:
+        n:DECIMAL {Const n}
+      | x:IDENT   {Var x}
+      | -"(" parse -")"
+    )
+    
   end
                     
 (* Simple statements: syntax and sematics *)
@@ -120,31 +116,26 @@ module Stmt =
 
     (* Statement evaluator
 
-          val eval : config -> t -> config
+         val eval : config -> t -> config
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let rec eval (s, i, o) = function
-      | Read x -> Expr.update x (List.hd i) s, (List.tl i), o
-      | Write y -> s, i, o@[Expr.eval s y]
-      | Assign (x, y) -> Expr.update x (Expr.eval s y) s, i, o
-      | Seq (y, y') -> eval (eval (s, i, o) y) y'
-                                                         
-
+    let rec eval ((st, i, o) as conf) stmt =
+      match stmt with
+      | Read    x       -> (match i with z::i' -> (Expr.update x z st, i', o) | _ -> failwith "Unexpected end of input")
+      | Write   e       -> (st, i, o @ [Expr.eval st e])
+      | Assign (x, e)   -> (Expr.update x (Expr.eval st e) st, i, o)
+      | Seq    (s1, s2) -> eval (eval conf s1) s2
+                                
     (* Statement parser *)
     ostap (
       parse:
-        !(Ostap.Util.expr
-          (fun x -> x)
-          [|
-            `Righta, [ostap (";"), fun x y -> Seq (x, y)]
-          |]
-          primary
-        );
-      primary:
-        -"read" -"(" x:IDENT -")" {Read x}
-        | -"write" -"(" e:!(Expr.parse) -")" {Write e}
-        | x:IDENT -":=" e:!(Expr.parse) {Assign (x, e)}
+        s:stmt ";" ss:parse {Seq (s, ss)}
+      | stmt;
+      stmt:
+        "read" "(" x:IDENT ")"          {Read x}
+      | "write" "(" e:!(Expr.parse) ")" {Write e}
+      | x:IDENT ":=" e:!(Expr.parse)    {Assign (x, e)}            
     )
   end
 
@@ -159,4 +150,3 @@ let eval p i =
 
 (* Top-level parser *)
 let parse = Stmt.parse                                                     
-
