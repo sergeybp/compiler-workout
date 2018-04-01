@@ -43,15 +43,38 @@ module Expr =
  
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
-    *)                                                       
-    let eval st expr = failwith "Not yet implemented"
+    *)                                                      
+    let to_func op =
+      let bti   = function true -> 1 | _ -> 0 in
+      let itb b = b <> 0 in
+      let (|>) f g   = fun x y -> f (g x y) in
+      match op with
+      | "+"  -> (+)
+      | "-"  -> (-)
+      | "*"  -> ( * )
+      | "/"  -> (/)
+      | "%"  -> (mod)
+      | "<"  -> bti |> (< )
+      | "<=" -> bti |> (<=)
+      | ">"  -> bti |> (> )
+      | ">=" -> bti |> (>=)
+      | "==" -> bti |> (= )
+      | "!=" -> bti |> (<>)
+      | "&&" -> fun x y -> bti (itb x && itb y)
+      | "!!" -> fun x y -> bti (itb x || itb y)
+      | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)    
+    
+    let rec eval st expr =      
+      match expr with
+      | Const n -> n
+      | Var   x -> st x
+      | Binop (op, x, y) -> to_func op (eval st x) (eval st y)
 
     (* Expression parser. You can use the following terminals:
 
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
          DECIMAL --- a decimal constant [0-9]+ as a string
-                                                                                                                  
-    *)
+    *) 
     ostap (                                      
       parse: empty {failwith "Not yet implemented"}
     )
@@ -88,7 +111,6 @@ module Stmt =
     ostap (
       parse: empty {failwith "Not yet implemented"}
     )
-      
   end
 
 (* The top-level definitions *)
@@ -96,12 +118,7 @@ module Stmt =
 (* The top-level syntax category is statement *)
 type t = Stmt.t    
 
-(* Top-level evaluator
 
-     eval : t -> int list -> int list
-
-   Takes a program and its input stream, and returns the output stream
-*)
 let eval p i =
   let _, _, o = Stmt.eval (Expr.empty, i, []) p in o
 
