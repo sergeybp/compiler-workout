@@ -83,11 +83,11 @@ module Expr =
                            List.map  (fun s -> ostap(- $(s)), (fun x y -> Binop (s, x, y))) s
                         ) 
               [|                
-    `Lefta, ["!!"];
-    `Lefta, ["&&"];
-    `Nona , ["=="; "!="; "<="; "<"; ">="; ">"];
-    `Lefta, ["+" ; "-"];
-    `Lefta, ["*" ; "/"; "%"];
+                `Lefta, ["!!"];
+                `Lefta, ["&&"];
+                `Nona , ["=="; "!="; "<="; "<"; ">="; ">"];
+                `Lefta, ["+" ; "-"];
+                `Lefta, ["*" ; "/"; "%"];
               |] 
        )
        primary);

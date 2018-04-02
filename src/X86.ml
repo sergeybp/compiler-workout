@@ -86,7 +86,32 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code = failwith "Not yet implemented"
+let rec compile env = function
+  | [] -> env, []
+  | instr :: c -> 
+    let env, asm = match instr with
+        | CONST n -> let s, e = env#allocate in e, [Mov (L n, s)]
+        | WRITE -> let s, e = env#pop in e, [Push s; Call "Lwrite"; Pop eax]
+        | LD x -> let s, e = (env#global x)#allocate in e, [Push edx; Mov (M (e#loc x), edx); Mov(edx,s); Pop edx]
+        | ST x -> let s, e = (env#global x)#pop in e, [Mov (s, M (e#loc x))]
+        | READ -> let s, e = env#allocate in e, [Call "Lread"; Mov (eax, s)]
+        | LABEL s -> env, [Label s]
+        | JMP l -> env, [Jmp l]
+        | CJMP (s, l) -> let x, env = env#pop in env, [Binop ("cmp", L 0, x); CJmp (s, l)]
+        | BINOP op -> let r, l, e = env#pop2 in let ret, e' = e#allocate in
+          match op with
+            | "+" | "-" | "*" -> e', [Mov (l, eax); Binop (op, r, eax); Mov (eax, l)]
+            | "/" -> e', [Mov (l, eax); Cltd; IDiv r; Mov (eax, ret)]
+            | "%" -> e', [Mov (l, eax); Cltd; IDiv r; Mov (edx, ret)]
+            | ">" -> e', [Mov (l, eax); Binop ("cmp", r, eax); Mov (eax, l)] @ [Mov (L 0, eax); Set ("g", "%al");  Mov (eax, ret)]
+            | ">=" -> e', [Mov (l, eax); Binop ("cmp", r, eax); Mov (eax, l)] @ [Mov (L 0, eax); Set ("ge", "%al"); Mov (eax, ret)]
+            | "<" -> e', [Mov (l, eax); Binop ("cmp", r, eax); Mov (eax, l)] @ [Mov (L 0, eax); Set ("l", "%al");  Mov (eax, ret)]
+            | "<=" -> e', [Mov (l, eax); Binop ("cmp", r, eax); Mov (eax, l)] @ [Mov (L 0, eax); Set ("le", "%al"); Mov (eax, ret)]
+            | "==" -> e', [Mov (l, eax); Binop ("cmp", r, eax); Mov (eax, l)] @ [Mov (L 0, eax); Set ("e", "%al");  Mov (eax, ret)]
+            | "!=" -> e', [Mov (l, eax); Binop ("cmp", r, eax); Mov (eax, l)] @ [Mov (L 0, eax); Set ("ne", "%al"); Mov (eax, ret)]
+            | "&&" | "!!" -> e', [Binop ("^", eax, eax); Binop ("^", edx, edx); Binop ("cmp", L 0, r); Set ("nz", "%al"); Binop ("cmp", L 0, l); Set ("nz", "%dl"); Binop (op, eax, edx); Mov (edx, ret)]
+            | _ -> failwith "Not implemented yet"
+    in let e, a = compile env c in e, asm @ a;
 
 (* A set of strings *)           
 module S = Set.Make (String)
