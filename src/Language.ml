@@ -76,8 +76,27 @@ module Expr =
          DECIMAL --- a decimal constant [0-9]+ as a string
     *) 
     ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
-    )
+      parse:
+    !(Ostap.Util.expr 
+             (fun x -> x)
+       (Array.map (fun (a, s) -> a, 
+                           List.map  (fun s -> ostap(- $(s)), (fun x y -> Binop (s, x, y))) s
+                        ) 
+              [|                
+    `Lefta, ["!!"];
+    `Lefta, ["&&"];
+    `Nona , ["=="; "!="; "<="; "<"; ">="; ">"];
+    `Lefta, ["+" ; "-"];
+    `Lefta, ["*" ; "/"; "%"];
+              |] 
+       )
+       primary);
+      
+      primary:
+        n:DECIMAL {Const n}
+      | x:IDENT   {Var x}
+      | -"(" parse -")"
+)
     
   end
                     
@@ -94,7 +113,7 @@ module Stmt =
     (* empty statement                  *) | Skip
     (* conditional                      *) | If     of Expr.t * t * t
     (* loop with a pre-condition        *) | While  of Expr.t * t
-    (* loop with a post-condition       *) (* add yourself *)  with show
+    (* loop with a post-condition       *) | Repeat of t * Expr.t  with show
                                                                     
     (* The type of configuration: a state, an input stream, an output stream *)
     type config = Expr.state * int list * int list 
@@ -105,13 +124,44 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let rec eval conf stmt = failwith "Not yet implemented"
-                               
+    let rec eval ((st, i, o) as conf) stmt =
+      match stmt with
+      | Read    x       -> (match i with z::i' -> (Expr.update x z st, i', o) | _ -> failwith "Unexpected end of input")
+      | Write   e       -> (st, i, o @ [Expr.eval st e])
+      | Assign (x, e)   -> (Expr.update x (Expr.eval st e) st, i, o)
+      | Seq    (s1, s2) -> eval (eval conf s1) s2
+      | Skip -> conf
+      | If (e, t, f) ->  if Expr.eval st e = 0 then eval conf f else eval conf t
+      | While (e, s) ->  if Expr.eval st e = 0 then conf else eval (eval conf s) stmt
+      | Repeat (s, e) -> let conf' = eval conf s in let (st', _, _) = conf' in if Expr.eval st' e = 0 then eval conf' stmt else conf'
+                                
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not yet implemented"}
+       parse:
+        s:stmt ";" ss:parse {Seq (s, ss)}
+      | stmt;
+      stmt:
+        %"skip" {Skip}
+      | %"if" e:!(Expr.parse)
+        %"then" t:parse 
+        elifStmts:(%"elif" !(Expr.parse) %"then" parse)*
+        elseStmt:(%"else" f:parse)?
+        %"fi" {If (e, t, List.fold_right (fun (e, s) b -> If (e, s, b)) elifStmts (match elseStmt with Some x -> x | None -> Skip))} 
+      | %"while" e:!(Expr.parse) 
+        %"do" s:parse 
+        %"od" {While (e, s)}
+      | %"repeat" s:parse 
+        %"until" e:!(Expr.parse) {Repeat (s, e)}
+      | %"for" s1:parse -","
+        e:!(Expr.parse) -","
+        s2:parse
+        %"do" s3:parse 
+        %"od" {Seq (s1, While (e, Seq(s3, s2)))}
+      | "read" -"(" x:IDENT -")" {Read x}
+      | "write" -"(" e:!(Expr.parse) -")" {Write e}
+      | x:IDENT -":=" e:!(Expr.parse) {Assign (x, e)}         
     )
-  end
+    end
 
 (* The top-level definitions *)
 

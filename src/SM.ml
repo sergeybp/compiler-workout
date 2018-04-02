@@ -29,18 +29,20 @@ type config = int list * Stmt.config
    Takes a configuration and a program, and returns a configuration as a result
  *)                         
 
-let rec eval ((stack, ((st, i, o) as c)) as conf) = function
+let rec eval env ((stack, ((st, i, o) as c)) as conf) = function
 | [] -> conf
-| insn :: prg' ->
-   eval 
-     (match insn with
-      | BINOP op -> let y::x::stack' = stack in (Expr.to_func op x y :: stack', c)
-      | READ     -> let z::i'        = i     in (z::stack, (st, i', o))
-      | WRITE    -> let z::stack'    = stack in (stack', (st, i, o @ [z]))
-      | CONST i  -> (i::stack, c)
-      | LD x     -> (st x :: stack, c)
-      | ST x     -> let z::stack'    = stack in (stack', (Expr.update x z st, i, o))
-     ) prg'
+| insn :: prg' -> 
+    match insn with
+    | BINOP op -> let y::x::stack' = stack in eval env (Expr.to_func op x y :: stack', c) prg'
+    | READ -> let z::i' = i in eval env (z::stack, (st, i', o)) prg'
+    | WRITE -> let z::stack' = stack in eval env (stack', (st, i, o @ [z])) prg'
+    | CONST i -> eval env (i::stack, c) prg'
+    | LD x -> eval env (st x :: stack, c) prg'
+    | ST x -> let z::stack' = stack in eval env (stack', (Expr.update x z st, i, o)) prg'
+    | LABEL _ -> eval env conf prg'
+    | JMP l -> eval env conf (env#labeled l)
+    | CJMP (s, l) -> let x::stack' = stack in let prg2 = if (x = 0 && s = "z") || (x != 0 && s = "nz") then env#labeled l else prg'
+      in eval env (stack', c) prg2
 
 (* Top-level evaluation
 
@@ -65,14 +67,25 @@ let run p i =
    Takes a program in the source language and returns an equivalent program for the
    stack machine
  *)
-let rec compile =
-  let rec expr = function
-  | Expr.Var   x          -> [LD x]
-  | Expr.Const n          -> [CONST n]
-  | Expr.Binop (op, x, y) -> expr x @ expr y @ [BINOP op]
+let compile p =
+  let  lG = object
+    val mutable i = 0
+    method get = i <- i + 1; "l_" ^ string_of_int i end
+  in let rec compile_e e =
+    match e with
+    | Language.Expr.Const n -> [CONST n]
+    | Language.Expr.Var x -> [LD x]
+    | Language.Expr.Binop (op, e1, e2) -> compile_e e1 @ compile_e e2 @ [BINOP op]
+  in let rec compile' p =
+    match p with
+    | Language.Stmt.Read x -> [READ; ST x]
+    | Language.Stmt.Write e -> compile_e e @ [WRITE]
+    | Language.Stmt.Assign (x, e) -> compile_e e @ [ST x]
+    | Language.Stmt.Seq (st1, st2) -> compile' st1 @ compile' st2
+    | Language.Stmt.Skip -> []
+    | Language.Stmt.If (e, t, f) -> let else_label =  lG#get in let fi_label =  lG#get in compile_e e @ [CJMP ("z", else_label)] @ compile' t @ [JMP fi_label] @ [LABEL else_label] @ compile' f @ [LABEL fi_label]
+    | Language.Stmt.While (e, s) -> let cond_label =  lG#get in let loop_label =  lG#get in [JMP cond_label] @ [LABEL loop_label] @ compile' s @ [LABEL cond_label] @ compile_e e @ [CJMP ("nz", loop_label)]
+    | Language.Stmt.Repeat (s, e) -> let loop_label =  lG#get in [LABEL loop_label] @ compile' s @ compile_e e @ [CJMP ("z", loop_label)]
+    | _ -> failwith "Undefined Behavior"
   in
-  function
-  | Stmt.Seq (s1, s2)  -> compile s1 @ compile s2
-  | Stmt.Read x        -> [READ; ST x]
-  | Stmt.Write e       -> expr e @ [WRITE]
-  | Stmt.Assign (x, e) -> expr e @ [ST x]
+  compile' p
