@@ -12,37 +12,38 @@ open Language
 (* store a variable from the stack *) | ST    of string
 (* a label                         *) | LABEL of string
 (* unconditional jump              *) | JMP   of string                                                                                                                
-(* conditional jump                *) | CJMP  of string * string with show
+(* conditional jump                *) | CJMP  of string * string
+(* begins procedure definition     *) | BEGIN of string list * string list
+(* end procedure definition        *) | END
+(* calls a procedure               *) | CALL  of string with show
                                                    
 (* The type for the stack machine program *)                                                               
 type prg = insn list
 
-(* The type for the stack machine configuration: a stack and a configuration from statement
+(* The type for the stack machine configuration: control stack, stack and configuration from statement
    interpreter
  *)
-type config = int list * Stmt.config
+type config = (prg * State.t) list * int list * Stmt.config
 
 (* Stack machine interpreter
 
      val eval : env -> config -> prg -> config
-
    Takes a configuration and a program, and returns a configuration as a result
  *)                         
 
-let rec eval env ((stack, ((st, i, o) as c)) as conf) = function
+let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
 | [] -> conf
 | insn :: prg' -> 
     match insn with
-    | BINOP op -> let y::x::stack' = stack in eval env (Expr.to_func op x y :: stack', c) prg'
-    | READ -> let z::i' = i in eval env (z::stack, (st, i', o)) prg'
-    | WRITE -> let z::stack' = stack in eval env (stack', (st, i, o @ [z])) prg'
-    | CONST i -> eval env (i::stack, c) prg'
-    | LD x -> eval env (st x :: stack, c) prg'
-    | ST x -> let z::stack' = stack in eval env (stack', (Expr.update x z st, i, o)) prg'
+    | BINOP op -> let y::x::stack' = stack in eval env (cstack, Expr.to_func op x y :: stack', c) prg'
+    | READ -> let z::i' = i in eval env (cstack, z::stack, (st, i', o)) prg'
+    | WRITE -> let z::stack' = stack in eval env (cstack, stack', (st, i, o @ [z])) prg'
+    | CONST i -> eval env (cstack, i::stack, c) prg'
+    | LD x -> eval env (cstack, State.eval st x :: stack, c) prg'
+    | ST x -> let z::stack' = stack in eval env (cstack, stack', (State.update x z st, i, o)) prg'
     | LABEL _ -> eval env conf prg'
     | JMP l -> eval env conf (env#labeled l)
-    | CJMP (s, l) -> let x::stack' = stack in let prg2 = if (x = 0 && s = "z") || (x != 0 && s = "nz") then env#labeled l else prg'
-      in eval env (stack', c) prg2
+    | CJMP (cond, name) -> let x::stack' = stack in eval env (cstack, stack', c) (if ( (if cond = "nz" then x <> 0 else x = 0)) then (env#labeled name) else prg')
 
 (* Top-level evaluation
 
@@ -58,11 +59,11 @@ let run p i =
   | _ :: tl         -> make_map m tl
   in
   let m = make_map M.empty p in
-  let (_, (_, _, o)) = eval (object method labeled l = M.find l m end) ([], (Expr.empty, i, [])) p in o
+  let (_, _, (_, _, o)) = eval (object method labeled l = M.find l m end) ([], [], (State.empty, i, [])) p in o
 
 (* Stack machine compiler
 
-     val compile : Language.Stmt.t -> prg
+     val compile : Language.t -> prg
 
    Takes a program in the source language and returns an equivalent program for the
    stack machine
