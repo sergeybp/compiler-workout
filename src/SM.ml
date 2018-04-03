@@ -91,35 +91,20 @@ let rec cL lG =
     | Language.Expr.Const n -> [CONST n]
     | Language.Expr.Var x -> [LD x]
     | Language.Expr.Binop (op, e1, e2) -> compile_e e1 @ compile_e e2 @ [BINOP op] in function
-  | Stmt.Seq (s1, s2)  -> 
-    let labels1, res1 = cL lG s1 in
-    let labels2, res2 = cL labels1 s2 in
-    labels2, res1 @ res2
+  | Stmt.Seq (s1, s2)  -> let labels1, res1 = cL lG s1 in let labels2, res2 = cL labels1 s2 in labels2, res1 @ res2
   | Stmt.Read x        -> lG, [READ; ST x]
   | Stmt.Write e       -> lG, compile_e e @ [WRITE]
   | Stmt.Assign (x, e) -> lG, compile_e e @ [ST x]
   | Stmt.Skip          -> lG, []
-  | Stmt.If (condition, ifAction, elseAction) ->
-    let compiledCondition = compile_e condition in
-    let jumpElse, labels1 = lG#new_label in
-    let jumpEndIf, labels2 = labels1#new_label in
-    let labels3, compiledIf = cL labels2 ifAction in
-    let labels4, compiledElse = cL labels3 elseAction in
-    labels4, compiledCondition @ [CJMP ("z", jumpElse)] @ compiledIf @ [JMP jumpEndIf] @ [LABEL jumpElse] @ compiledElse @ [LABEL jumpEndIf]
-  | Stmt.While (condition, loopAction) ->
-    let compiledCondition = compile_e condition in
-    let labelBegin, labels1 = lG#new_label in
-    let labelEnd, labels2 = labels1#new_label in
-    let labels3, compiledLoopAction = cL labels2 loopAction in
-    labels3, [LABEL labelBegin] @ compiledCondition @ [CJMP ("z", labelEnd)] @ compiledLoopAction @ [JMP labelBegin] @ [LABEL labelEnd] 
-  | Stmt.Repeat (loopAction, condition) ->
-    let compiledCondition = compile_e condition in
-    let labelBegin, labels1 = lG#new_label in
-    let labels2, compiledLoopAction = cL labels1 loopAction in
-    labels2, [LABEL labelBegin] @ compiledLoopAction @ compiledCondition @ [CJMP ("z", labelBegin)]
-  | Stmt.Call (f, args) -> let compiledArgsList = List.map compile_e (List.rev args) in
-    let compiledArgs = List.concat compiledArgsList in
-    lG, compiledArgs @ [CALL (tmp f)]
+  | Stmt.If (cond, ifA, elseA) -> let cC = compile_e cond in let lgElse, labels1 = lG#new_label in
+    let lgFi, labels2 = labels1#new_label in let lg3, compiledIf = cL labels2 ifA in let lg4, compiledElse = cL lg3 elseA 
+    in lg4, cC @ [CJMP ("z", lgElse)] @ compiledIf @ [JMP lgFi] @ [LABEL lgElse] @ compiledElse @ [LABEL lgFi]
+  | Stmt.While (cond, loopA) -> let cC = compile_e cond in let labelBegin, labels1 = lG#new_label in
+    let labelEnd, labels2 = labels1#new_label in let lg3, cLoopA = cL labels2 loopA 
+    in lg3, [LABEL labelBegin] @ cC @ [CJMP ("z", labelEnd)] @ cLoopA @ [JMP labelBegin] @ [LABEL labelEnd] 
+  | Stmt.Repeat (loopA, cond) -> let cC = compile_e cond in let labelBegin, labels1 = lG#new_label in
+    let labels2, cLoopA = cL labels1 loopA in labels2, [LABEL labelBegin] @ cLoopA @ cC @ [CJMP ("z", labelBegin)]
+  | Stmt.Call (f, args) -> let compiledArgsList = List.map compile_e (List.rev args) in let cA = List.concat compiledArgsList in lG, cA @ [CALL (tmp f)]
 
 let cF lG (name, (args, locals, body)) = let endLabel, labels1 = lG#new_label in
   let labels2, compiledFunction = cL labels1 body in
@@ -130,6 +115,6 @@ let cA lG defs =
     (lG, []) defs
 
 let compile (defs, p) = let endLabel, lG = (new lG)#new_label in
-  let l1, compiledProgram = cL lG p in 
-  let _, allFuncDefinitions = cA l1 defs in
-  (LABEL "main" :: compiledProgram @ [LABEL endLabel]) @ [END] @ (List.concat allFuncDefinitions)
+  let l1, cP = cL lG p in 
+  let _, allF = cA l1 defs in
+  (LABEL "main" :: cP @ [LABEL endLabel]) @ [END] @ (List.concat allF)

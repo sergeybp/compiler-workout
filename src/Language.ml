@@ -146,45 +146,56 @@ module Stmt =
 
        which returns a list of formal parameters, local variables, and a body for given definition
     *)
-    let rec eval ((st, i, o) as conf) stmt =
-      match stmt with
-      | Read    x       -> (match i with z::i' -> (State.update x z st, i', o) | _ -> failwith "Unexpected end of input")
-      | Write   e       -> (st, i, o @ [Expr.eval st e])
+    let rec eval env ((st, i, o) as conf) stmt = match stmt with
+      | Read x -> (match i with z::i' -> (State.update x z st, i', o) | _ -> failwith "Unexpected end of input")
+      | Write e -> (st, i, o @ [Expr.eval st e])
       | Assign (x, e)   -> (State.update x (Expr.eval st e) st, i, o)
-      | Seq    (s1, s2) -> eval (eval conf s1) s2
+      | If (expr, thenIf, elseIf) -> if (Expr.eval st expr) <> 0 then (eval env conf thenIf) else (eval env conf elseIf)
+      | While (expr, lS) -> rwL env conf expr lS
+      | Seq (s1, s2) -> eval env (eval env conf s1) s2
       | Skip -> conf
-      | If (e, t, f) ->  if Expr.eval st e = 0 then eval conf f else eval conf t
-      | While (e, s) ->  if Expr.eval st e = 0 then conf else eval (eval conf s) stmt
-      | Repeat (s, e) -> let conf' = eval conf s in let (st', _, _) = conf' in if Expr.eval st' e = 0 then eval conf' stmt else conf'
+      | Repeat (lS, expr) ->  rwL env (eval env conf lS) expr lS
+      | Call (f, args) -> let computedArgs = List.map (Expr.eval st) args in
+          let formals, locals, body = env#definition f in
+          let methodState = State.enter st (formals@locals) in
+          let argsMapping = List.combine formals computedArgs in
+          let fullMethodState = List.fold_left (fun st (x, a) -> State.update x a st) methodState argsMapping in
+          let resultState, resultInput, resultOutput = eval env (fullMethodState, i, o) body in
+          (State.leave resultState st, resultInput, resultOutput) and rwL env ((st, _, _) as conf) expr lS = if (Expr.eval st expr) != 0 then rwL env (eval env conf lS) expr lS else conf
+
+    let rec parsEI eIf el =  match eIf with
+          | [] -> el
+          | (condition, action)::tEI -> If (condition, action, parsEI tEI el)
+
+    let parseEl eIf el = let elseActionParsed = match el with
+      | None -> Skip
+      | Some action -> action in parsEI eIf elseActionParsed
                                 
     (* Statement parser *)
     ostap (
-       parse:
+      parse:
         s:stmt ";" ss:parse {Seq (s, ss)}
       | stmt;
       stmt:
-        %"skip" {Skip}
-      | %"if" e:!(Expr.parse)
-        %"then" t:parse 
-        elifStmts:(%"elif" !(Expr.parse) %"then" parse)*
-        elseStmt:(%"else" f:parse)?
-        %"fi" {If (e, t, List.fold_right (fun (e, s) b -> If (e, s, b)) elifStmts (match elseStmt with Some x -> x | None -> Skip))} 
-      | %"while" e:!(Expr.parse) 
-        %"do" s:parse 
-        %"od" {While (e, s)}
-      | %"repeat" s:parse 
-        %"until" e:!(Expr.parse) {Repeat (s, e)}
-      | %"for" s1:parse -","
-        e:!(Expr.parse) -","
-        s2:parse
-        %"do" s3:parse 
-        %"od" {Seq (s1, While (e, Seq(s3, s2)))}
-      | "read" -"(" x:IDENT -")" {Read x}
-      | "write" -"(" e:!(Expr.parse) -")" {Write e}
-      | x:IDENT -":=" e:!(Expr.parse) {Assign (x, e)}   
-      )      
-                                
-    end
+        "read" "(" x:IDENT ")" {Read x}
+      | "write" "(" e:!(Expr.parse) ")" {Write e}
+      | x:IDENT 
+        assignmentOrCall: (
+          ":=" e:!(Expr.parse) {Assign (x, e)}
+          | "(" args:!(Util.list0)[Expr.parse] ")" {Call (x, args)}
+        ) {assignmentOrCall}
+      | %"skip"                         {Skip}
+      | %"if" condition: !(Expr.parse) %"then" action:parse 
+        eIf:(%"elif" !(Expr.parse) %"then" parse)*
+        el:(%"else" parse)?
+        %"fi" { If (condition, action, parseEl eIf el)}
+      | %"while" condition: !(Expr.parse) %"do" action:parse %"od" { While (condition, action) }
+      | %"repeat" action:parse %"until" condition: !(Expr.parse) { Repeat (action, condition) }
+      | %"for" initialize:parse "," condition: !(Expr.parse)
+        "," increment:parse %"do" action:parse %"od" {Seq (initialize, While (condition, Seq (action, increment)))}
+    )
+      
+  end
 
 (* Function and procedure definitions *)
 module Definition =
@@ -194,7 +205,10 @@ module Definition =
     type t = string * (string list * string list * Stmt.t)
 
     ostap (
-      parse: empty {failwith "Not implemented"}
+      argument: IDENT;
+      parse: %"fun" functionName:IDENT "(" args: !(Util.list0 argument) ")"
+        locals: (%"local" !(Util.list argument))?
+        "{" body: !(Stmt.parse) "}" { (functionName, (args, (match locals with None -> [] | Some l -> l), body))}
     )
 
   end
@@ -204,10 +218,14 @@ module Definition =
 (* The top-level syntax category is a pair of definition list and statement (program body) *)
 type t = Definition.t list * Stmt.t    
 
-(*
+(* Top-level evaluator
+     eval : t -> int list -> int list
    Takes a program and its input stream, and returns the output stream
 *)
-let eval (defs, body) i = failwith "Not implemented"
+let eval (defs, body) i = let module CM = Map.Make (String) in
+  let defsM = List.fold_left (fun m ((name, _) as defs) -> CM.add name defs m) CM.empty defs in
+  let envObject = (object method definition name = snd (CM.find name defsM) end) in
+  let _, _, output = Stmt.eval envObject (State.empty, i, []) body in output
                                    
 (* Top-level parser *)
-let parse = failwith "Not implemented"
+let parse = ostap (!(Definition.parse)* !(Stmt.parse))
