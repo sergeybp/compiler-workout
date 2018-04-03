@@ -44,6 +44,16 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
     | LABEL _ -> eval env conf prg'
     | JMP l -> eval env conf (env#labeled l)
     | CJMP (cond, name) -> let x::stack' = stack in eval env (cstack, stack', c) (if ( (if cond = "nz" then x <> 0 else x = 0)) then (env#labeled name) else prg')
+    | CALL f -> eval env ((prg', st)::cstack, stack, c) (env#labeled f)
+    | BEGIN (args, locals) -> let rec resolve acc args stack = match args, stack with
+      | [], _ -> List.rev acc, stack
+      | a::args', s::stack' -> resolve ((a, s)::acc) args' stack' in 
+        let resolved, stack' = resolve [] args stack in
+        let state' = (List.fold_left (fun s (x, v) -> State.update x v s) (State.enter st (args @ locals)) resolved, i, o) in
+        eval env (cstack, stack', state') prg'
+    | END -> ( match cstack with
+      | (prg', st')::cstack' -> eval env (cstack', stack, (State.leave st st', i, o)) prg'
+      | [] -> conf )
 
 (* Top-level evaluation
 
@@ -68,25 +78,58 @@ let run p i =
    Takes a program in the source language and returns an equivalent program for the
    stack machine
  *)
-let compile p =
-  let  lG = object
-    val mutable i = 0
-    method get = i <- i + 1; "l_" ^ string_of_int i end
-  in let rec compile_e e =
+
+class lG = object (self)
+    val counter = 0
+    method new_label = "label_" ^ string_of_int counter, {<counter = counter + 1>} end 
+
+let tmp x = "l_" ^ x
+
+let rec cL lG =
+  let rec compile_e e =
     match e with
     | Language.Expr.Const n -> [CONST n]
     | Language.Expr.Var x -> [LD x]
-    | Language.Expr.Binop (op, e1, e2) -> compile_e e1 @ compile_e e2 @ [BINOP op]
-  in let rec compile' p =
-    match p with
-    | Language.Stmt.Read x -> [READ; ST x]
-    | Language.Stmt.Write e -> compile_e e @ [WRITE]
-    | Language.Stmt.Assign (x, e) -> compile_e e @ [ST x]
-    | Language.Stmt.Seq (st1, st2) -> compile' st1 @ compile' st2
-    | Language.Stmt.Skip -> []
-    | Language.Stmt.If (e, t, f) -> let else_label =  lG#get in let fi_label =  lG#get in compile_e e @ [CJMP ("z", else_label)] @ compile' t @ [JMP fi_label] @ [LABEL else_label] @ compile' f @ [LABEL fi_label]
-    | Language.Stmt.While (e, s) -> let cond_label =  lG#get in let loop_label =  lG#get in [JMP cond_label] @ [LABEL loop_label] @ compile' s @ [LABEL cond_label] @ compile_e e @ [CJMP ("nz", loop_label)]
-    | Language.Stmt.Repeat (s, e) -> let loop_label =  lG#get in [LABEL loop_label] @ compile' s @ compile_e e @ [CJMP ("z", loop_label)]
-    | _ -> failwith "Undefined Behavior"
-  in
-  compile' p
+    | Language.Expr.Binop (op, e1, e2) -> compile_e e1 @ compile_e e2 @ [BINOP op] in function
+  | Stmt.Seq (s1, s2)  -> 
+    let labels1, res1 = cL lG s1 in
+    let labels2, res2 = cL labels1 s2 in
+    labels2, res1 @ res2
+  | Stmt.Read x        -> lG, [READ; ST x]
+  | Stmt.Write e       -> lG, compile_e e @ [WRITE]
+  | Stmt.Assign (x, e) -> lG, compile_e e @ [ST x]
+  | Stmt.Skip          -> lG, []
+  | Stmt.If (condition, ifAction, elseAction) ->
+    let compiledCondition = compile_e condition in
+    let jumpElse, labels1 = lG#new_label in
+    let jumpEndIf, labels2 = labels1#new_label in
+    let labels3, compiledIf = cL labels2 ifAction in
+    let labels4, compiledElse = cL labels3 elseAction in
+    labels4, compiledCondition @ [CJMP ("z", jumpElse)] @ compiledIf @ [JMP jumpEndIf] @ [LABEL jumpElse] @ compiledElse @ [LABEL jumpEndIf]
+  | Stmt.While (condition, loopAction) ->
+    let compiledCondition = compile_e condition in
+    let labelBegin, labels1 = lG#new_label in
+    let labelEnd, labels2 = labels1#new_label in
+    let labels3, compiledLoopAction = cL labels2 loopAction in
+    labels3, [LABEL labelBegin] @ compiledCondition @ [CJMP ("z", labelEnd)] @ compiledLoopAction @ [JMP labelBegin] @ [LABEL labelEnd] 
+  | Stmt.Repeat (loopAction, condition) ->
+    let compiledCondition = compile_e condition in
+    let labelBegin, labels1 = lG#new_label in
+    let labels2, compiledLoopAction = cL labels1 loopAction in
+    labels2, [LABEL labelBegin] @ compiledLoopAction @ compiledCondition @ [CJMP ("z", labelBegin)]
+  | Stmt.Call (f, args) -> let compiledArgsList = List.map compile_e (List.rev args) in
+    let compiledArgs = List.concat compiledArgsList in
+    lG, compiledArgs @ [CALL (tmp f)]
+
+let cF lG (name, (args, locals, body)) = let endLabel, labels1 = lG#new_label in
+  let labels2, compiledFunction = cL labels1 body in
+  labels2, [LABEL name; BEGIN (args, locals)] @ compiledFunction @ [LABEL endLabel; END]
+
+let cA lG defs = 
+  List.fold_left (fun (lG, allDefsCode) (name, others) -> let labels1, singleCode = cF lG (tmp name, others) in labels1, singleCode::allDefsCode)
+    (lG, []) defs
+
+let compile (defs, p) = let endLabel, lG = (new lG)#new_label in
+  let l1, compiledProgram = cL lG p in 
+  let _, allFuncDefinitions = cA l1 defs in
+  (LABEL "main" :: compiledProgram @ [LABEL endLabel]) @ [END] @ (List.concat allFuncDefinitions)
