@@ -87,11 +87,14 @@ module Expr =
       | "!!" -> fun x y -> bti (itb x || itb y)
       | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)    
     
-    let rec eval st expr =      
-      match expr with
-      | Const n -> n
-      | Var   x -> State.eval st x
-      | Binop (op, x, y) -> to_func op (eval st x) (eval st y)
+    let rec eval env ((st, i, o, r) as conf) expr = match expr with
+      | Const n -> (st, i, o, Some n)
+      | Var   x -> (st, i, o, Some(State.eval st x))
+      | Binop (op, x, y) -> let (_, _, _, Some firstArg) as conf = eval env conf x in
+        let (st, i, o, Some secondArg) = eval env conf y 
+        in (st, i, o, Some (to_func op firstArg secondArg)) 
+      | Call (name, args) -> let computedArgs, conf = List.fold_left (fun (acc, conf) arg -> let (_, _, _, Some compArg) as conf = eval env conf arg in compArg::acc, conf) ([], conf) args in
+        env#definition env name (List.rev computedArgs) conf
          
     (* Expression parser. You can use the following terminals:
 
@@ -147,22 +150,21 @@ module Stmt =
        Takes an environment, a configuration and a statement, and returns another configuration. The 
        environment is the same as for expressions
     *)
-    let rec eval env ((st, i, o) as conf) stmt = match stmt with
-      | Read x -> (match i with z::i' -> (State.update x z st, i', o) | _ -> failwith "Unexpected end of input")
-      | Write e -> (st, i, o @ [Expr.eval st e])
-      | Assign (x, e)   -> (State.update x (Expr.eval st e) st, i, o)
-      | If (expr, thenIf, elseIf) -> if (Expr.eval st expr) <> 0 then (eval env conf thenIf) else (eval env conf elseIf)
-      | While (expr, lS) -> rwL env conf expr lS
-      | Seq (s1, s2) -> eval env (eval env conf s1) s2
-      | Skip -> conf
-      | Repeat (lS, expr) ->  rwL env (eval env conf lS) expr lS
-      | Call (f, args) -> let computedArgs = List.map (Expr.eval st) args in
-          let formals, locals, body = env#definition f in
-          let methodState = State.enter st (formals@locals) in
-          let argsMapping = List.combine formals computedArgs in
-          let fullMethodState = List.fold_left (fun st (x, a) -> State.update x a st) methodState argsMapping in
-          let resultState, resultInput, resultOutput = eval env (fullMethodState, i, o) body in
-          (State.leave resultState st, resultInput, resultOutput) and rwL env ((st, _, _) as conf) expr lS = if (Expr.eval st expr) != 0 then rwL env (eval env conf lS) expr lS else conf
+  let rec eval env ((st, i, o, r) as conf) k stmt = let seq x stmt = match stmt with
+    | Skip -> x
+    | y -> Seq (x, y) in match stmt with
+      | Read x -> eval env (match i with z::i' -> (State.update x z st, i', o, r) | _ -> failwith "Unexpected end of input") Skip k
+      | Write e -> eval env (let (st, i, o, Some x) = Expr.eval env conf e in (st, i, o @ [x], r)) Skip k
+      | Assign (x, e) -> eval env (let (st, i, o, Some rr) = Expr.eval env conf e in (State.update x rr st, i, o, r)) Skip k
+      | If (expr, thenIf, elseIf) -> let (_, _, _, Some x) as conf = Expr.eval env conf expr in if x <> 0 then (eval env conf k thenIf) else (eval env conf k elseIf)
+      | While (expr, lS) -> let (_, _, _, Some x) as conf = Expr.eval env conf expr in if (x = 0) then eval env conf Skip k else eval env conf (seq stmt k) lS
+      | Repeat (lS, expr) ->  eval env conf (seq (While (Expr.Binop ("==", expr, Expr.Const 0), lS)) k) lS
+      | Seq (s1, s2) -> eval env conf (seq s2 k) s1
+      | Skip -> match k with Skip -> conf | something -> eval env conf Skip k
+      | Call (f, args) -> eval env (Expr.eval env conf (Expr.Call (f, args))) k Skip
+      | Return res -> match res with
+        | None -> (st, i, o, None)
+        | Some r -> Expr.eval env conf r
 
     let rec parsEI eIf el =  match eIf with
           | [] -> el
