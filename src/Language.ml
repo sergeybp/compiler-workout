@@ -122,7 +122,7 @@ module Expr =
         n:DECIMAL {Const n}
       | x:IDENT   {Var x}
       | -"(" parse -")"
-)
+  )
     
   end
                     
@@ -207,13 +207,8 @@ module Definition =
     (* The type for a definition: name, argument list, local variables, body *)
     type t = string * (string list * string list * Stmt.t)
 
-    ostap (
-      arg  : IDENT;
-      parse: %"fun" name:IDENT "(" args:!(Util.list0 arg) ")"
-         locs:(%"local" !(Util.list arg))?
-        "{" body:!(Stmt.parse) "}" {
-        (name, (args, (match locs with None -> [] | Some l -> l), body))
-      }
+    ostap (     
+      parse: empty {failwith "Not implemented"}
     )
 
   end
