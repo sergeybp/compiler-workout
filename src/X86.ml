@@ -96,51 +96,29 @@ let init n f =
     else (f i) :: (init' (i + 1) n f)
   in init' 0 n f
 
-let make_pl_sub_mul op x y ret =
-  [
-  Mov (x, eax);
-  Binop(op, y, eax); Mov (eax, ret); 
-  ]
-
-let make_div_mode op x y ret = 
-  let move_cmd = match op with
-    | "%" -> Mov (edx, ret)
-    | "/" -> Mov (eax, ret)
-    | _ -> failwith "Unsuported division op"
-  in [
-    Mov (L 0, edx); Mov (x, eax); Cltd; IDiv y; move_cmd;
-  ]
-
-let make_cmp op x y ret = 
-  let suffix = match op with
+let mC op x y ret = let suffix = match op with
     | "<"  -> "l"
     | "<=" -> "le"
     | ">"  -> "g"
     | ">=" -> "ge"
     | "==" -> "e"
     | "!=" -> "ne" 
-    | _ -> failwith "Unexpected cmp op" 
-    in
-  [
-    Mov (x, edx); Mov(y, eax);
-    Binop("cmp", eax, edx); 
-    Mov (L 0, eax); 
-    Set(suffix, "%al");
-    Mov(eax, ret);
-  ]
+    | _ -> failwith "" 
+    in [ Mov (x, edx); Mov(y, eax); Binop("cmp", eax, edx); Mov (L 0, eax); Set(suffix, "%al"); Mov(eax, ret); ]
 
-let make_logic op x y ret = 
-  [
-  Binop ("^", eax, eax); Binop ("^", edx, edx);
-  Binop ("cmp", L 0, x); Set ("nz", "%al");
-  Binop ("cmp", L 0, y); Set ("nz", "%dl");
-  Binop (op, eax, edx); Mov (edx, ret);
-  ]
+let sub_mul op x y ret = [ Mov (x, eax); Binop(op, y, eax); Mov (eax, ret); ]
+
+let div_m op x y ret = let move_cmd = match op with
+    | "%" -> Mov (edx, ret)
+    | "/" -> Mov (eax, ret)
+    | _ -> failwith ""
+  in [ Mov (L 0, edx); Mov (x, eax); Cltd; IDiv y; move_cmd; ]
+
+let mL op x y ret = [ Binop ("^", eax, eax); Binop ("^", edx, edx); Binop ("cmp", L 0, x); Set ("nz", "%al"); Binop ("cmp", L 0, y); Set ("nz", "%dl"); Binop (op, eax, edx); Mov (edx, ret); ]
 
 let rec pusha env z = function
   | 0 ->  env, z
-  | n ->  let x, new_env = env#pop in
-pusha new_env ((Push x)::z) (n-1)
+  | n ->  let x, new_env = env#pop in pusha new_env ((Push x)::z) (n-1)
 
 let rec compile env code = match code with
   | [] -> env, []
@@ -166,10 +144,10 @@ let rec compile env code = match code with
           let y, x, new_env = env#pop2 in
           let ret_val, new_env_2 = new_env#allocate in
           let asm_list_maker = match op with
-            | "+" | "-" | "*" -> make_pl_sub_mul
-            | "/" | "%" -> make_div_mode
-            | "<" | "<=" | ">" | ">=" | "==" | "!=" -> make_cmp
-            | "&&" | "!!" -> make_logic
+            | "+" | "-" | "*" -> sub_mul
+            | "/" | "%" -> div_m
+            | "<" | "<=" | ">" | ">=" | "==" | "!=" -> mC
+            | "&&" | "!!" -> mL
             | _ -> failwith "Not supported binop"
           in new_env_2, asm_list_maker op x y ret_val
         | LABEL name -> env, [Label name]
