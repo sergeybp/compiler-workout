@@ -28,7 +28,7 @@ type config = (prg * State.t) list * int list * Expr.config
 
 (* Stack machine interpreter
 
-     val eval : env -> config -> prg -> config
+     val eval : lG -> config -> prg -> config
    Takes a configuration and a program, and returns a configuration as a result
  *)                         
 let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
@@ -80,41 +80,32 @@ let run p i =
  *)
 
 class lG = object (self)
-    val counter = 0
-    method new_label = "label_" ^ string_of_int counter, {<counter = counter + 1>} end 
+  val mutable label = 0
+  method new_label = let last_label = label in label <- label + 1; Printf.sprintf "L%d" last_label
+end
 
-let tmp x = "l_" ^ x
+let rec compile' lG p =
+  let rec compile_e = function
+  | Expr.Var   x -> [LD x]
+  | Expr.Const n -> [CONST n]
+  | Expr.Binop (op, x, y) -> compile_e x @ compile_e y @ [BINOP op]
+  | Expr.Call (f, params) -> List.concat (List.map compile_e params) @ [CALL (f, List.length params, false)] in match p with
+  | Stmt.Seq (s1, s2) -> compile' lG s1 @ compile' lG s2
+  | Stmt.Read x -> [READ; ST x]
+  | Stmt.Write e -> compile_e e @ [WRITE]
+  | Stmt.Assign (x, e) -> compile_e e @ [ST x]
+  | Stmt.Skip -> []
+  | Stmt.While (e, s) -> let loopLabel = lG#new_label in let endLabel  = lG#new_label in
+                 [LABEL loopLabel] @ compile_e e @ [CJMP ("z", endLabel)] @
+                 compile' lG s @ [JMP loopLabel; LABEL endLabel]
+  | Stmt.Repeat (s, e) -> let startLabel = lG#new_label in [LABEL startLabel] @ compile' lG s @ compile_e e @ [CJMP ("z", startLabel)]
+  | Stmt.If (e, s1, s2) -> let fLabel = lG#new_label in let eLabel = lG#new_label in
+                 compile_e e @ [CJMP ("z", fLabel)] @ 
+                 compile' lG s1 @ [JMP eLabel; LABEL fLabel] @ 
+                 compile' lG s2 @ [LABEL eLabel]
+  | Stmt.Call (f, p) -> List.concat (List.map compile_e p) @ [CALL (f, List.length p, true)]
+  | Stmt.Return r -> (match r with | None -> [RET false] | Some v -> compile_e v @ [RET true])
 
-let rec cL lG =
-  let rec compile_e e =
-    match e with
-    | Language.Expr.Const n -> [CONST n]
-    | Language.Expr.Var x -> [LD x]
-    | Language.Expr.Binop (op, e1, e2) -> compile_e e1 @ compile_e e2 @ [BINOP op] in function
-  | Stmt.Seq (s1, s2)  -> let labels1, res1 = cL lG s1 in let labels2, res2 = cL labels1 s2 in labels2, res1 @ res2
-  | Stmt.Read x        -> lG, [READ; ST x]
-  | Stmt.Write e       -> lG, compile_e e @ [WRITE]
-  | Stmt.Assign (x, e) -> lG, compile_e e @ [ST x]
-  | Stmt.Skip          -> lG, []
-  | Stmt.If (cond, ifA, elseA) -> let cC = compile_e cond in let lgElse, labels1 = lG#new_label in
-    let lgFi, labels2 = labels1#new_label in let lg3, compiledIf = cL labels2 ifA in let lg4, compiledElse = cL lg3 elseA 
-    in lg4, cC @ [CJMP ("z", lgElse)] @ compiledIf @ [JMP lgFi] @ [LABEL lgElse] @ compiledElse @ [LABEL lgFi]
-  | Stmt.While (cond, loopA) -> let cC = compile_e cond in let labelBegin, labels1 = lG#new_label in
-    let labelEnd, labels2 = labels1#new_label in let lg3, cLoopA = cL labels2 loopA 
-    in lg3, [LABEL labelBegin] @ cC @ [CJMP ("z", labelEnd)] @ cLoopA @ [JMP labelBegin] @ [LABEL labelEnd] 
-  | Stmt.Repeat (loopA, cond) -> let cC = compile_e cond in let labelBegin, labels1 = lG#new_label in
-    let labels2, cLoopA = cL labels1 loopA in labels2, [LABEL labelBegin] @ cLoopA @ cC @ [CJMP ("z", labelBegin)]
-  | Stmt.Call (f, args) -> let args_prg = List.concat @@ List.map compile_e args in (lG, args_prg @ [CALL (f, List.length args, true)])
+let cmp lG (name, (params, locals, body)) = [LABEL name; BEGIN (name, params, locals)] @ compile' lG body @ [END] 
 
-let cF lG (name, (args, locals, body)) = let endLabel, labels1 = lG#new_label in
-  let labels2, compiledFunction = cL labels1 body in
-  labels2, [LABEL name; BEGIN (name, args, locals)] @ compiledFunction @ [LABEL endLabel; END]
-
-let cA lG defs = 
-  List.fold_left (fun (lG, allDefsCode) (name, others) -> let labels1, singleCode = cF lG (tmp name, others) in labels1, singleCode::allDefsCode)
-    (lG, []) defs
-
-let compile (defs, p) = let endLabel, lG = (new lG)#new_label in
-  let l1, cP = cL lG p in 
-  let _, allF = cA l1 defs in
-  (LABEL "main" :: cP @ [LABEL endLabel]) @ [END] @ (List.concat allF)
+let compile (defs, p) = let lG = new lG in compile' lG p @ [END] @ List.concat (List.map (cmp lG) defs)
