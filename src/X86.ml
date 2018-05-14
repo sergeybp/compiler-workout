@@ -89,6 +89,18 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
+let compile env code =
+  let suffix = function
+  | "<"  -> "l"
+  | "<=" -> "le"
+  | "==" -> "e"
+  | "!=" -> "ne"
+  | ">=" -> "ge"
+  | ">"  -> "g"
+  | _    -> failwith "unknown operator"	
+  in
+  let rec compile' env scode = failwith "Not implemented" in
+  compile' env code
 
 let init n f =
   let rec init' i n f =
@@ -125,7 +137,6 @@ let rec compile env code = match code with
   | instr :: code' ->
     let env, asm = match instr with
         | CONST value -> let s, env_new = env#allocate in env_new, [Mov (L value, s)]
-        | WRITE -> let s, env_new = env#pop in env_new, [Push s; Call "Lwrite"; Pop eax]
         | LD name -> let s, env_new = (env#global name)#allocate in
           let loc_name = env_new#loc name in let cmds = 
             match s with 
@@ -139,7 +150,6 @@ let rec compile env code = match code with
               | S _ | M _ -> [Mov (s, eax); Mov (eax, loc_name)]
               | _ ->  [Mov (s, loc_name)]
           in env_new, cmds
-        | READ -> let s, env_new = env#allocate in env_new, [Call "Lread"; Mov (eax, s)]
         | BINOP op ->
           let y, x, new_env = env#pop2 in
           let ret_val, new_env_2 = new_env#allocate in
@@ -193,7 +203,7 @@ class env =
       let x, n =
 	let rec allocate' = function
 	| []                            -> ebx     , 0
-	| (S n)::_                      -> S (n+1) , n+1
+	| (S n)::_                      -> S (n+1) , n+2
 	| (R n)::_ when n < num_of_regs -> R (n+1) , stack_slots
         | (M _)::s                      -> allocate' s
 	| _                             -> S 0     , 1
@@ -233,7 +243,7 @@ class env =
     (* returns a list of live registers *)
     method live_registers =
       List.filter (function R _ -> true | _ -> false) stack
-      
+       
   end
   
 (* Generates an assembler text for a program: first compiles the program into
