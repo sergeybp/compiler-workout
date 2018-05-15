@@ -251,7 +251,7 @@ module Stmt =
         if (Value.to_int x = 0) then eval env conf Skip k else eval env conf (seq stmt k) loopStmt      
       | Repeat (lS, expr) ->  eval env conf (seq (While (Expr.Binop ("==", expr, Expr.Const 0), lS)) k) lS
       | Seq (s1, s2) -> eval env conf (seq s2 k) s1
-      | Skip -> match k with Skip -> conf | something -> eval env conf Skip k
+      | Skip -> (match k with Skip -> conf | something -> eval env conf Skip k)
       | Call (f, args) -> eval env (Expr.eval env conf (Expr.Call (f, args))) k Skip
       | Return res -> match res with
         | None -> (st, i, o, None)
