@@ -242,7 +242,7 @@ module Stmt =
        environment is the same as for expressions
     *)
 
-  let rec eval env ((st, i, o, r) as conf) k stmt = let seq x stmt = match stmt with
+  let rec eval env ((st, i, o, r) as conf) k stmt = let seq x ex = match ex with
     | Skip -> x
     | y -> Seq (x, y) in match stmt with
       | Assign (x, t, expr)  -> let (st, i, o, t) = Expr.eval_list env conf t in let (st, i, o, Some v) = Expr.eval env (st, i, o, None) expr in eval env (update st x v t, i, o, None) Skip k
