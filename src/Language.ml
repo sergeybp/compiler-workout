@@ -17,7 +17,7 @@ let init n f =
 module Value =
   struct
 
-    @type t = Int of int | String of string | Array of t list | Sexp of string * t list with show
+    @type t = Int of int | String of string | Array of t list with show
 
     let to_int = function 
     | Int n -> n 
@@ -155,7 +155,6 @@ module Expr =
           (st, i, o, Some (Value.of_int (to_func op (Value.to_int l) (Value.to_int r))))
       | Call (def, args) -> let (st, i, o, a) = eval_list env conf args in env#definition env def a (st, i, o, None)
       | Array a -> let (st, i, o, result) = eval_list env conf a in env#definition env "$array" result (st, i, o, None)
-      | Sexp (e, a) -> let (st, i, o, result) = eval_list env conf a in (st, i, o, Some (Value.Sexp (e, result)))
       | Elem (e, i) -> let (st, i, o, a) = eval_list env conf [e; i] in env#definition env "$elem" a (st, i, o, None)
       | Length x -> let (st, i, o, Some a) = eval env conf x in env#definition env "$length" [a] (st, i, o, None)
 
@@ -204,7 +203,6 @@ module Expr =
       | x:IDENT  s: ("(" args: !(Util.list0)[parse] ")" {Call (x, args)} | empty {Var x}) {s}
       | c:CHAR {Const (Char.code c)}
       | "[" elements:!(Util.list0)[parse] "]" {Array elements}
-      | "`" t:IDENT args:(-"(" !(Util.list)[parse] -")")? {Sexp (t, match args with None -> [] | Some x -> x)} 
       | -"(" parse -")"
   )
   end
