@@ -8,7 +8,8 @@ open List
 @type insn =
 (* binary operator                 *) | BINOP   of string
 (* put a constant on the stack     *) | CONST   of int
-(* put a string on the stack       *) | STRING  of string                      
+(* put a string on the stack       *) | STRING  of string
+(* create an S-expression          *) | SEXP    of string * int
 (* load a variable to the stack    *) | LD      of string
 (* store a variable from the stack *) | ST      of string
 (* store in an array               *) | STA     of string * int
@@ -18,7 +19,14 @@ open List
 (* begins procedure definition     *) | BEGIN   of string * string list * string list
 (* end procedure definition        *) | END
 (* calls a function/procedure      *) | CALL    of string * int * bool
-(* returns from a function         *) | RET     of bool with show
+(* returns from a function         *) | RET     of bool
+(* drops the top element off       *) | DROP
+(* duplicates the top element      *) | DUP
+(* swaps two top elements          *) | SWAP
+(* checks the tag of S-expression  *) | TAG     of string
+(* enters a scope                  *) | ENTER   of string list
+(* leaves a scope                  *) | LEAVE
+with show
                                                    
 (* The type for the stack machine program *)
 type prg = insn list
@@ -42,7 +50,7 @@ let split n l =
   in
   unzip ([], l) n
 
-let check_jump x h = match x with
+let check_jump lG h = match lG with
     | "z"  -> Value.to_int h = 0
     | "nz" -> Value.to_int h <> 0
 
@@ -52,24 +60,38 @@ let rec reduce_args f args stack = match args, stack with
         
 let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
 | [] -> conf
-| insn :: prg' -> 
-    (match insn with
-      | BINOP op -> let y :: x :: stack' = stack in eval env (cstack, (Value.of_int (Expr.to_func op (Value.to_int x) (Value.to_int y))) :: stack', c) prg'
-      | CONST x  -> eval env (cstack, (Value.of_int x) :: stack, c) prg'
-      | STRING s -> eval env (cstack, (Value.of_string s)::stack, c) prg'
-      | LD x     -> eval env (cstack, State.eval st x :: stack, c) prg'
-      | ST x     -> let r :: stack' = stack in eval env (cstack, stack', (State.update x r st, i, o)) prg'
-      | STA (x, n) -> let t :: ind, stack' = split (n + 1) stack in eval env (cstack, stack', (Language.Stmt.update st x t (List.rev ind), i, o)) prg'
-      | LABEL s  -> eval env conf prg'
-      | JMP name -> eval env conf (env#labeled name)
-      | CJMP (br, name) -> eval env (cstack, tl stack, c) ( if (check_jump br (hd stack)) then (env#labeled name) else prg')
-      | CALL (f, n, p) -> if env#is_label f then eval env ((prg', st)::cstack, stack, c) (env#labeled f) else eval env (env#builtin conf f n p) prg'
-      | BEGIN (_, args, locals) -> let res, newStack = reduce_args [] args stack in eval env (cstack, newStack, 
-                                                 (List.fold_left (fun s (x, v) -> State.update x v s) (State.enter st (args @ locals)) res, i, o)) prg'
-      | END | RET _ -> (match cstack with
-                          | (prg', st') :: cstack' -> eval env (cstack', stack, (State.leave st st', i, o)) prg'
-                          | [] -> conf)
-    )
+| JMP name :: _ -> eval env conf (env#labeled name)
+| CJMP (cond, name) :: prg' -> (match stack with
+      | (x::new_stack) -> (if (cond = "z" && Value.to_int x == 0) || (cond = "nz" && Value.to_int x != 0) 
+          then eval env (cstack, new_stack, c) (env#labeled name) else eval env (cstack, new_stack, c) prg')
+      | _ -> failwith "Stack empty")
+| CALL (name, n, p) :: prg_next -> if env#is_label name then eval env ((prg_next, st)::cstack, stack, c)(env#labeled name) else eval env (env#builtin conf name n p) prg_next
+| END :: _ | RET _ :: _-> (match cstack with
+              | (prg_prev, st_prev)::cstack_new -> eval env (cstack_new, stack, (State.leave st st_prev, i, o)) prg_prev
+              | [] -> conf)
+| insn :: prg' ->
+  let new_config = match insn with
+      | BINOP op -> let y::x::stack' = stack in (cstack, Value.of_int (Expr.to_func op (Value.to_int x) (Value.to_int y)) :: stack', c)
+      | CONST i  -> (cstack, (Value.of_int i)::stack, c)
+      | LD x     -> (cstack, State.eval st x :: stack, c)
+      | ST x     -> let z::stack' = stack in (cstack, stack', (State.update x z st, i, o))
+      | LABEL name -> conf
+      | SEXP (t, n) -> let elems, stack_new = split (n+1) stack in (cstack, Value.sexp t (List.rev elems):: stack_new, c)
+      | STA (x, n) -> let v::is, stack' = split (n+1) stack in (cstack, stack', (Stmt.update st x v @@ List.rev is, i, o))
+      | DROP -> let _::stack_new = stack in (cstack, stack_new, c)
+      | DUP -> let x::_ = stack in (cstack, x::stack, c)
+      | BEGIN (_, p, l) -> let stEnter = State.enter st (p @ l) in let upt = fun p (st, x::stack') -> (State.update p x st, stack') in
+                           let (st', stack') = List.fold_right upt p (stEnter, stack) in (cstack, stack', (st', i, o))
+      | STRING s -> (cstack, (Value.of_string s)::stack, c)
+      | SWAP -> let a::b::stack_new = stack in (cstack, b::a::stack_new, c)
+      | TAG s -> let a::stack_new = stack in let res = match a with
+          | Value.Sexp (t, _) ->  Value.of_int @@ if t = s then 1 else 0
+          | _ ->  Value.of_int 0 in (cstack, res::stack_new, c)
+      | ENTER xs -> (cstack, stack, (State.push st State.undefined xs, i, o))
+      | LEAVE -> (cstack, stack, (State.drop st, i, o))
+      | _ -> failwith ""
+  in eval env new_config prg'
+    
 
 (* Top-level evaluation
 
@@ -104,6 +126,17 @@ let run p i =
   in
   o
 
+
+class env =
+  object (self)
+    val mutable label = 0
+    method next_label = let last_label = label in label <- label + 1; Printf.sprintf "L%d" last_label
+  end
+
+let rec init i n f = if i >= n then [] else (f i) :: (init (i + 1) n f)
+
+let getName s = "L" ^ s 
+
 (* Stack machine compiler
 
      val compile : Language.t -> prg
@@ -111,47 +144,54 @@ let run p i =
    Takes a program in the source language and returns an equivalent program for the
    stack machine
  *)
-
-class lG = object (self)
-  val mutable label = 0
-  method new_label = "label_" ^ string_of_int label, {<label = label + 1>}
-end
-
-let getName name = "L" ^ name
-
-let rec compile' lG =
-  let rec compile_e = function
+let rec compile' d l env p = let rec maxx = function
+    | []      -> 0
+    | x::rest -> max x @@ maxx rest in
+  let rec dp = function
+    | Stmt.Pattern.Wildcard -> 1
+    | Stmt.Pattern.Ident _  -> 1
+    | Stmt.Pattern.Sexp (_, elems) -> 1 + (maxx @@ List.map dp elems) in
+  let rec call f args p = let cargs = List.concat @@ List.map expr args in cargs @ [CALL (getName f, List.length args, p)]
+  and pattern now labelsD = function
+    | Stmt.Pattern.Wildcard -> [DROP]
+    | Stmt.Pattern.Ident _ -> [DROP]
+    | Stmt.Pattern.Sexp (tag, elems) -> [DUP; TAG tag; CJMP ("z", List.nth labelsD now)] @
+    (List.concat @@ List.mapi (fun i epatt -> [DUP; CONST i; CALL (getName ".elem", 2, false)] @ pattern (now + 1) labelsD epatt) elems) @ [DROP]
+  and bindings' vars = function
+    | Stmt.Pattern.Wildcard -> vars, [DROP]
+    | Stmt.Pattern.Ident x -> x::vars, [ST x]
+    | Stmt.Pattern.Sexp (_, elems) -> let varsN, p = (List.fold_left (fun (v, p) (i, patr) -> let new_v, pr = bindings' v patr in new_v, (p @ [DUP; CONST i; CALL (getName ".elem", 2, false)] @ pr))
+            (vars, []) (List.mapi (fun i e -> (i, e)) elems)) in varsN, p @ [DROP]
+  and bindings p = let vars, prog = bindings' [] p in (ENTER vars) :: prog
+  and expr = function
   | Expr.Var   x -> [LD x]
   | Expr.Const n -> [CONST n]
-  | Expr.Binop (op, x, y) -> compile_e x @ compile_e y @ [BINOP op]
+  | Expr.Binop (op, x, y) -> expr x @ expr y @ [BINOP op]
+  | Expr.Call (f, params) -> call f params false
   | Expr.String s -> [STRING s]
-  | Expr.Call (f, params) -> List.concat (List.map compile_e params) @ [CALL (f, List.length params, false)] 
-  | Expr.Array arr -> List.flatten (List.map compile_e arr) @ [CALL ("$array", List.length arr, false)]
-  | Expr.Elem (arr, i) -> compile_e arr @ compile_e i @ [CALL ("$elem", 2, false)]
-  | Expr.Length t -> compile_e t @ [CALL ("$length", 1, false)]
-  | Expr.Call (f, args) -> call f args false
-    and call f args p = let listArgs = List.map compile_e (List.rev args) in let argsCompiled = List.concat listArgs in argsCompiled @ [CALL (getName f, List.length args, p)]
-      in function
-    | Stmt.Seq (s1, s2) -> let l1, res1 = compile' lG s1 in let l2, res2 = compile' l1 s2 in l2, res1 @ res2
-    | Stmt.Assign (x, [], e) -> lG, compile_e e @ [ST x]
-    | Stmt.Assign (x, is, e) -> lG, List.flatten (List.map compile_e (is @ [e])) @ [STA (x, List.length is)]
-    | Stmt.Skip -> lG, []
-    | Stmt.If (condition, actionIf, actionElse) -> let cond = compile_e condition  and elseJ, l1 = lG#new_label in let endIfJ, l2 = l1#new_label in
-        let l3, ifComp = compile' l2 actionIf in let l4, compiledElse = compile' l3 actionElse in
-        l4, cond @ [CJMP ("z", elseJ)] @ ifComp @ [JMP endIfJ] @ [LABEL elseJ] @ compiledElse @ [LABEL endIfJ]
-    | Stmt.While (condition, actionLoop) -> let cond = compile_e condition in let labelBegin, l1 = lG#new_label in let labelEnd, l2 = l1#new_label in
-        let l3, actionLoopC = compile' l2 actionLoop in l3, [LABEL labelBegin] @ cond @ [CJMP ("z", labelEnd)] @ actionLoopC @ [JMP labelBegin] @ [LABEL labelEnd] 
-    | Stmt.Repeat (actionLoop, condition) -> let cond = compile_e condition in let labelBegin, l1 = lG#new_label in let l2, actionLoopC = compile' l1 actionLoop in
-        l2, [LABEL labelBegin] @ actionLoopC @ cond @ [CJMP ("z", labelBegin)]
-    | Stmt.Call (f, args) -> lG, call f args true
-    | Stmt.Return res -> lG, (match res with None -> [] | Some v -> compile_e v) @ [RET (res <> None)]
+  | Expr.Array elems -> call ".array" elems false
+  | Expr.Elem (a, i) -> call ".elem" [a; i] false
+  | Expr.Length a -> call ".length" [a] false
+  | Expr.Sexp (tag, es) -> (List.concat @@ List.map expr es) @ [SEXP (tag, List.length es)]
+  and chCase (patr, body) caseEnd = let d = dp patr in let labelsD = init 0 (d + 1) (fun _ -> env#next_label) in
+    let drop_list = List.rev @@ List.tl @@ List.concat @@ List.map (fun s -> [DROP; LABEL s]) labelsD in let _, cbody = compile' (d + 1) l env body in
+    [DUP] @ pattern 1 labelsD patr @ [DUP] @ bindings patr @ cbody @ [LEAVE; JMP caseEnd] @ drop_list in
+  match p with
+  | Stmt.Seq (s1, s2) -> let l1, p1 = compile' d l env s1 in let l2, p2 = compile' d l env s2 in l1 || l2, p1 @ p2
+  | Stmt.Assign (x, [], e) -> false, expr e @ [ST x]
+  | Stmt.Assign (x, is, e) -> false, List.concat (List.map expr is) @ expr e @ [STA (x, List.length is)]
+  | Stmt.Skip -> false, []
+  | Stmt.If (e, s1, s2) -> let labelF = env#next_label in let labelE = env#next_label in let f1, p1 = compile' d l env s1 in
+              let f2, p2 = compile' d l env s2 in f1 || f2, expr e @ [CJMP ("z", labelF)] @ p1 @ [JMP labelE; LABEL labelF] @ p2 @ [LABEL labelE]
+  | Stmt.While (e, s) -> let labelLoop = env#next_label in let endLabel  = env#next_label in let f, p = compile' d l env s in f, [LABEL labelLoop] @ expr e @ [CJMP ("z", endLabel)] @ p @ [JMP labelLoop; LABEL endLabel]
+  | Stmt.Repeat (s, e) -> let labelStart = env#next_label in let f, p = compile' d l env s in f, [LABEL labelStart] @ p @ expr e @ [CJMP ("z", labelStart)]
+  | Stmt.Call (f, p) -> false, call f p true
+  | Stmt.Return r -> false, (init 0 d (fun _ -> DROP)) @ (match r with | None -> [RET false] | Some v -> expr v @ [RET true])
+  | Stmt.Case (e, br) -> let caseEnd = env#next_label in false, expr e @ (List.concat @@ List.map (fun b -> chCase b caseEnd) br) @ [LABEL caseEnd; DROP]
 
-let func_defs lG (name, (args, locals, body)) = let endLabel, l1 = lG#new_label in let l2, funcC = compile' l1 body in
-    l2, [LABEL name; BEGIN (name, args, locals)] @ funcC @ [LABEL endLabel; END]
-
-let all_func_defs lG defs = List.fold_left (fun (lG, allDefsCode) (name, others) -> let l1, singleCode = func_defs lG (getName name, others) in l1, singleCode::allDefsCode) (lG, []) defs
-
-let compile (defs, p) = let endLabel, l = (new lG)#new_label in 
-  let l1, prog = compile' l p in 
-  let l2, defsAll = all_func_defs l1 defs in 
-  (prog @ [LABEL endLabel]) @ [END] @ (List.concat defsAll)
+let compile (defs, p) = let rec compile_def env (name, (args, locals, stmt)) =
+    let ll = env#next_label in let flag, code = compile' 0 ll env stmt in
+    env, [LABEL name; BEGIN (name, args, locals)] @ code @ (if flag then [LABEL ll] else []) @ [END]
+    in let env = new env in let env, def_code =
+      List.fold_left (fun (env, code) (name, others) -> let env, code' = compile_def env (getName name, others) in env, code'::code) (env, []) defs
+      in let ll = env#next_label in let flag, code = compile' 0 ll env p in (if flag then code @ [LABEL ll] else code) @ [END] @ (List.concat def_code)
