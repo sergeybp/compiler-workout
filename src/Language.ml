@@ -45,21 +45,21 @@ module Value =
 module State =
   struct
                                                                 
-    (* State: global state, local state, scope vs *)
+    (* State: global state, local state, scope variables *)
     type t =
     | G of (string -> Value.t)
     | L of string list * (string -> Value.t) * t
 
     (* Undefined state *)
-    let undefined x = failwith (Printf.sprintf "Undefined v: %s" x)
+    let undefined x = failwith (Printf.sprintf "Undefined variable: %s" x)
 
-    (* Bind a v to a value in a state *)
+    (* Bind a variable to a value in a state *)
     let bind x v s = fun y -> if x = y then v else s y 
 
     (* Empty state *)
     let empty = G undefined
 
-    (* Update: non-destructively "modifies" the state s by binding the v x 
+    (* Update: non-destructively "modifies" the state s by binding the variable x 
        to value v and returns the new state w.r.t. a scope
     *)
     let update x v s =
@@ -70,7 +70,7 @@ module State =
       in
       inner s
 
-    (* Evals a v in a state w.r.t. a scope *)
+    (* Evals a variable in a state w.r.t. a scope *)
     let rec eval s x =
       match s with
       | G s -> s x
@@ -108,7 +108,7 @@ module Builtin =
   struct
       
     let eval (st, i, o, _) args = function
-    | "read"     -> (match i with z::i' -> (st, i', o, Some (Value.of_int z)) | _ -> failwith "Unexpected end of i")
+    | "read"     -> (match i with z::i' -> (st, i', o, Some (Value.of_int z)) | _ -> failwith "Unexpected end of input")
     | "write"    -> (st, i, o @ [Value.to_int @@ List.hd args], None)
     | ".elem"    -> let [b; j] = args in
                     (st, i, o, let i = Value.to_int j in
@@ -137,7 +137,7 @@ module Expr =
     (* array              *) | Array  of t list
     (* string             *) | String of string
     (* S-expressions      *) | Sexp   of string * t list
-    (* v           *) | Var    of string
+    (* variable           *) | Var    of string
     (* binary operator    *) | Binop  of string * t * t
     (* element extraction *) | Elem   of t * t
     (* length             *) | Length of t 
@@ -151,14 +151,11 @@ module Expr =
         *, /, %              --- multiplication, division, reminder
     *)
 
-    (* The type of configuration: a state, an i stream, an o stream, an optional value *)
+    (* The type of configuration: a state, an input stream, an output stream, an optional value *)
     type config = State.t * int list * int list * Value.t option
                                                             
     (* Expression evaluator
           val eval : state -> t -> int
- 
-       Takes a state and an expression, and returns the value of the expression in 
-       the given state.
     *)                                                      
     let to_func op =
       let bti   = function true -> 1 | _ -> 0 in
@@ -239,7 +236,7 @@ module Stmt =
     module Pattern =
       struct
 
-        (* The type for perns *)
+        (* The type for patterns *)
         @type t =
         (* wildcard "-"     *) | Wildcard
         (* S-expression     *) | Sexp   of string * t list
@@ -264,7 +261,7 @@ module Stmt =
     (* conditional                      *) | If     of Expr.t * t * t
     (* loop with a pre-condition        *) | While  of Expr.t * t
     (* loop with a post-condition       *) | Repeat of t * Expr.t
-    (* pern-matching                 *) | Case   of Expr.t * (Pattern.t * t) list
+    (* pattern-matching                 *) | Case   of Expr.t * (Pattern.t * t) list
     (* return statement                 *) | Return of Expr.t option
     (* call a procedure                 *) | Call   of string * Expr.t list 
     (* leave a scope                    *) | Leave  with show
@@ -376,7 +373,7 @@ module Stmt =
 module Definition =
   struct
 
-    (* The type for a definition: name, argument list, local vs, body *)
+    (* The type for a definition: name, argument list, local variables, body *)
     type t = string * (string list * string list * Stmt.t)
 
     ostap (     
@@ -397,7 +394,7 @@ type t = Definition.t list * Stmt.t
 
 (* Top-level evaluator
      eval : t -> int list -> int list
-   Takes a program and its i stream, and returns the o stream
+   Takes a program and its i stream, and returns the output stream
 *)
 
 let eval (defs, body) i =
