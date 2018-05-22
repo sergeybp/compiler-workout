@@ -83,6 +83,17 @@ let show instr =
 (* Opening stack machine to use instructions without fully qualified names *)
 open SM
 
+
+let getStrCode s = 
+  let char_code = function
+    | '_' -> 53
+    | c when c <= 'Z' -> Char.code c - 64
+    | c -> Char.code c - 70 
+    in let rec hash x = function
+      | n when n >= String.length s -> x
+      | n -> hash ((x lsl 6) lor char_code (String.sub s 0 (if String.length s < 5 then String.length s else 5)).[n]) n + 1 
+      in hash 0 0
+
 (* Symbolic stack machine evaluator
 
      compile : env -> prg -> env * instr list
@@ -145,6 +156,9 @@ let compile env code =
              let l, env = env#allocate in
              let env, call = call env ".string" 1 false in
              (env, Mov (M ("$" ^ s), l) :: call)
+      | SEXP (tag, ind) -> 
+            let env', code = call env ".sexp" (ind + 1) true in
+            (env', [Push (L (getStrCode tag))] @ code)
              
     | LD x ->
              let s, env' = (env#global x)#allocate in
